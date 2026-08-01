@@ -42,7 +42,11 @@ struct ActionCard<Content: View>: View {
 
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .foregroundStyle(isPrimary ? .white.opacity(0.8) : .tertiary)
+                        .foregroundStyle(
+                            isPrimary
+                                ? Color.white.opacity(0.8)
+                                : Color.secondary
+                        )
                 }
                 .foregroundStyle(isPrimary ? .white : .primary)
                 .padding(18)

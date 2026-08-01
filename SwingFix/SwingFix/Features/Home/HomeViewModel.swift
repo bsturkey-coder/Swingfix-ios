@@ -1,9 +1,10 @@
-import Foundation
+import Combine
 import PhotosUI
+import SwiftUI
 
 @MainActor
 final class HomeViewModel: ObservableObject {
-    @Published var selectedPickerItem: PhotosPickerItem?
+    @Published var selectedPickerItem: PhotosUI.PhotosPickerItem?
     @Published var importedVideo: ImportedVideo?
     @Published var isImporting = false
     @Published var errorMessage: String?
