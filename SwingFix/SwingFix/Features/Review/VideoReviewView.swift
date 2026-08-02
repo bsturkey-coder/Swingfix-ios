@@ -14,8 +14,10 @@ struct VideoReviewView: View {
 
     @State private var swingTimeline: SwingTimeline?
     @State private var selectedPhase: SwingPhase?
+    @State private var selectedWorkspace: ReviewWorkspace = .coach
 
     private let phaseDetector = SwingPhaseDetector()
+    private let coachingEngine = CoachingEngine()
 
     init(video: ImportedVideo) {
         self.video = video
@@ -61,9 +63,11 @@ struct VideoReviewView: View {
                             )
                         )
                     }
+
+                    reviewWorkspace
                 }
                 .padding()
-                .padding(.bottom, 20)
+                .padding(.bottom, 24)
             }
             .background(AppColors.pageBackground)
         }
@@ -77,12 +81,14 @@ struct VideoReviewView: View {
         }
     }
 
+    // MARK: - Playback controls
+
     private var playbackControls: some View {
         VStack(spacing: 16) {
             playbackTimeline
 
             HStack(spacing: 28) {
-                frameButton(
+                controlButton(
                     systemImage: "backward.frame.fill",
                     accessibilityLabel: "Previous frame"
                 ) {
@@ -114,7 +120,7 @@ struct VideoReviewView: View {
                         : "Play video"
                 )
 
-                frameButton(
+                controlButton(
                     systemImage: "forward.frame.fill",
                     accessibilityLabel: "Next frame"
                 ) {
@@ -183,19 +189,6 @@ struct VideoReviewView: View {
         }
     }
 
-    private func frameButton(
-        systemImage: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.title2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
     private func controlButton(
         systemImage: String,
         accessibilityLabel: String,
@@ -208,6 +201,107 @@ struct VideoReviewView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
     }
+
+    // MARK: - Review workspace
+
+    private var reviewWorkspace: some View {
+        VStack(spacing: 16) {
+            Picker(
+                "Review Workspace",
+                selection: $selectedWorkspace
+            ) {
+                ForEach(ReviewWorkspace.allCases) { workspace in
+                    Text(workspace.title)
+                        .tag(workspace)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Group {
+                switch selectedWorkspace {
+                case .coach:
+                    coachingWorkspace
+
+                case .metrics:
+                    metricsWorkspace
+
+                case .drills:
+                    drillsWorkspace
+                }
+            }
+            .frame(
+                maxWidth: .infinity,
+                alignment: .leading
+            )
+        }
+    }
+
+    private var coachingWorkspace: some View {
+        let activePhase = selectedPhase ?? .address
+        let recommendations = coachingEngine.recommendations(
+            for: activePhase
+        )
+
+        return CoachingCardView(
+            phase: activePhase,
+            recommendations: recommendations
+        )
+        .padding()
+        .background(AppColors.cardBackground)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 20,
+                style: .continuous
+            )
+        )
+    }
+
+    private var metricsWorkspace: some View {
+        placeholderWorkspace(
+            title: "Swing Metrics",
+            message: "Spine angle, shoulder turn, hip rotation, balance, and tempo will appear here after pose analysis is added.",
+            systemImage: "chart.bar.xaxis"
+        )
+    }
+
+    private var drillsWorkspace: some View {
+        placeholderWorkspace(
+            title: "Recommended Drills",
+            message: "SwingFix will recommend focused practice drills based on your highest-priority coaching feedback.",
+            systemImage: "figure.golf"
+        )
+    }
+
+    private func placeholderWorkspace(
+        title: String,
+        message: String,
+        systemImage: String
+    ) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: systemImage)
+                .font(.system(size: 42))
+                .foregroundStyle(AppColors.accent)
+
+            Text(title)
+                .font(.title3.bold())
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .background(AppColors.cardBackground)
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 20,
+                style: .continuous
+            )
+        )
+    }
+
+    // MARK: - Player setup
 
     @MainActor
     private func configurePlayer() async {
@@ -246,6 +340,7 @@ struct VideoReviewView: View {
         player.pause()
         isPlaying = false
         selectedPhase = marker.phase
+        selectedWorkspace = .coach
         currentTime = marker.time
         seek(to: marker.time)
     }
@@ -270,8 +365,8 @@ struct VideoReviewView: View {
             isPlaying = false
         } else {
             if currentTime >= duration {
-                seek(to: 0)
                 currentTime = 0
+                seek(to: 0)
             }
 
             player.playImmediately(
@@ -323,9 +418,9 @@ struct VideoReviewView: View {
     ) {
         player.pause()
         isPlaying = false
-
-        player.currentItem?
-            .step(byCount: frameCount)
+        player.currentItem?.step(
+            byCount: frameCount
+        )
     }
 
     private func updatePlaybackRate() {
@@ -442,5 +537,28 @@ struct VideoReviewView: View {
             minutes,
             remainingSeconds
         )
+    }
+}
+
+private enum ReviewWorkspace: String, CaseIterable, Identifiable {
+    case coach
+    case metrics
+    case drills
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .coach:
+            return "Coach"
+
+        case .metrics:
+            return "Metrics"
+
+        case .drills:
+            return "Drills"
+        }
     }
 }
