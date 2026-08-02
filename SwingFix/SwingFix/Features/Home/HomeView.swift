@@ -17,7 +17,7 @@ struct HomeView: View {
         .navigationTitle("SwingFix")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $viewModel.importedVideo) { video in
-            VideoReviewView(video: video)
+            VideoQualityCheckView(video: video)
         }
         .overlay {
             if viewModel.isImporting {
