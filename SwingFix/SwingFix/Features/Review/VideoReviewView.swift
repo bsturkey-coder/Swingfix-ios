@@ -12,9 +12,16 @@ struct VideoReviewView: View {
     @State private var timeObserverToken: Any?
     @State private var endObserverToken: NSObjectProtocol?
 
+    @State private var swingTimeline: SwingTimeline?
+    @State private var selectedPhase: SwingPhase?
+
+    private let phaseDetector = SwingPhaseDetector()
+
     init(video: ImportedVideo) {
         self.video = video
-        _player = State(initialValue: AVPlayer(url: video.url))
+        _player = State(
+            initialValue: AVPlayer(url: video.url)
+        )
     }
 
     var body: some View {
@@ -37,8 +44,26 @@ struct VideoReviewView: View {
                         )
 
                     playbackControls
+
+                    if let swingTimeline {
+                        SwingTimelineView(
+                            timeline: swingTimeline,
+                            selectedPhase: selectedPhase
+                        ) { marker in
+                            selectSwingPosition(marker)
+                        }
+                        .padding()
+                        .background(AppColors.cardBackground)
+                        .clipShape(
+                            RoundedRectangle(
+                                cornerRadius: 20,
+                                style: .continuous
+                            )
+                        )
+                    }
                 }
                 .padding()
+                .padding(.bottom, 20)
             }
             .background(AppColors.pageBackground)
         }
@@ -54,7 +79,7 @@ struct VideoReviewView: View {
 
     private var playbackControls: some View {
         VStack(spacing: 16) {
-            timeline
+            playbackTimeline
 
             HStack(spacing: 28) {
                 frameButton(
@@ -84,7 +109,9 @@ struct VideoReviewView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(
-                    isPlaying ? "Pause video" : "Play video"
+                    isPlaying
+                        ? "Pause video"
+                        : "Play video"
                 )
 
                 frameButton(
@@ -119,12 +146,15 @@ struct VideoReviewView: View {
         )
     }
 
-    private var timeline: some View {
+    private var playbackTimeline: some View {
         HStack(spacing: 12) {
             Text(formatTime(currentTime))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 34, alignment: .leading)
+                .frame(
+                    minWidth: 34,
+                    alignment: .leading
+                )
 
             Slider(
                 value: Binding(
@@ -133,6 +163,9 @@ struct VideoReviewView: View {
                     },
                     set: { newValue in
                         currentTime = newValue
+                        selectedPhase = nearestPhase(
+                            to: newValue
+                        )
                         seek(to: newValue)
                     }
                 ),
@@ -143,7 +176,10 @@ struct VideoReviewView: View {
             Text(formatTime(duration))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 34, alignment: .trailing)
+                .frame(
+                    minWidth: 34,
+                    alignment: .trailing
+                )
         }
     }
 
@@ -191,8 +227,41 @@ struct VideoReviewView: View {
             duration = 1.0
         }
 
+        swingTimeline = phaseDetector.detect(
+            duration: duration
+        )
+
+        selectedPhase = swingTimeline?
+            .markers
+            .first?
+            .phase
+
         addTimeObserver()
         addPlaybackEndObserver(for: currentItem)
+    }
+
+    private func selectSwingPosition(
+        _ marker: SwingTimeline.Marker
+    ) {
+        player.pause()
+        isPlaying = false
+        selectedPhase = marker.phase
+        currentTime = marker.time
+        seek(to: marker.time)
+    }
+
+    private func nearestPhase(
+        to time: Double
+    ) -> SwingPhase? {
+        guard let markers = swingTimeline?.markers,
+              !markers.isEmpty else {
+            return nil
+        }
+
+        return markers.min {
+            abs($0.time - time) <
+            abs($1.time - time)
+        }?.phase
     }
 
     private func togglePlayback() {
@@ -202,20 +271,36 @@ struct VideoReviewView: View {
         } else {
             if currentTime >= duration {
                 seek(to: 0)
+                currentTime = 0
             }
 
-            player.playImmediately(atRate: playbackRate)
+            player.playImmediately(
+                atRate: playbackRate
+            )
+
             isPlaying = true
         }
     }
 
     private func replay() {
+        selectedPhase = swingTimeline?
+            .markers
+            .first?
+            .phase
+
+        currentTime = 0
         seek(to: 0)
-        player.playImmediately(atRate: playbackRate)
+
+        player.playImmediately(
+            atRate: playbackRate
+        )
+
         isPlaying = true
     }
 
-    private func seek(to seconds: Double) {
+    private func seek(
+        to seconds: Double
+    ) {
         let clampedSeconds = min(
             max(seconds, 0),
             duration
@@ -233,10 +318,14 @@ struct VideoReviewView: View {
         )
     }
 
-    private func stepFrame(by frameCount: Int) {
+    private func stepFrame(
+        by frameCount: Int
+    ) {
         player.pause()
         isPlaying = false
-        player.currentItem?.step(byCount: frameCount)
+
+        player.currentItem?
+            .step(byCount: frameCount)
     }
 
     private func updatePlaybackRate() {
@@ -259,11 +348,18 @@ struct VideoReviewView: View {
             forInterval: interval,
             queue: .main
         ) { time in
-            currentTime = time.seconds.isFinite
+            let seconds = time.seconds.isFinite
                 ? time.seconds
                 : 0
 
+            currentTime = seconds
             isPlaying = player.rate > 0
+
+            if isPlaying {
+                selectedPhase = nearestPhase(
+                    to: seconds
+                )
+            }
         }
     }
 
@@ -279,6 +375,7 @@ struct VideoReviewView: View {
         ) { _ in
             isPlaying = false
             currentTime = duration
+            selectedPhase = .finish
         }
     }
 
@@ -287,7 +384,10 @@ struct VideoReviewView: View {
             return
         }
 
-        player.removeTimeObserver(timeObserverToken)
+        player.removeTimeObserver(
+            timeObserverToken
+        )
+
         self.timeObserverToken = nil
     }
 
