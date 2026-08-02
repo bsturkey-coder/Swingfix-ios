@@ -11,13 +11,15 @@ struct VideoReviewView: View {
     @State private var playbackRate: Float = 1.0
     @State private var timeObserverToken: Any?
     @State private var endObserverToken: NSObjectProtocol?
-
+    @State private var poseSequence: PoseSequence?
+    @State private var isProcessingPose = false
     @State private var swingTimeline: SwingTimeline?
     @State private var selectedPhase: SwingPhase?
     @State private var selectedWorkspace: ReviewWorkspace = .coach
 
     private let phaseDetector = SwingPhaseDetector()
     private let coachingEngine = CoachingEngine()
+    private let poseDetectionEngine = PoseDetectionEngine()
 
     init(video: ImportedVideo) {
         self.video = video
@@ -64,7 +66,15 @@ struct VideoReviewView: View {
                         )
                     }
 
-                    reviewWorkspace
+                    ReviewWorkspaceView(
+                        selectedWorkspace: $selectedWorkspace,
+                        selectedPhase: selectedPhase ?? .address,
+                        recommendations: coachingEngine.recommendations(
+                            for: selectedPhase ?? .address
+                        ),
+                        poseSequence: poseSequence,
+                        isProcessingPose: isProcessingPose
+                    )
                 }
                 .padding()
                 .padding(.bottom, 24)
@@ -75,6 +85,7 @@ struct VideoReviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await configurePlayer()
+            await processPoseSequence()
         }
         .onDisappear {
             cleanUpPlayer()
@@ -84,223 +95,43 @@ struct VideoReviewView: View {
     // MARK: - Playback controls
 
     private var playbackControls: some View {
-        VStack(spacing: 16) {
-            playbackTimeline
 
-            HStack(spacing: 28) {
-                controlButton(
-                    systemImage: "backward.frame.fill",
-                    accessibilityLabel: "Previous frame"
-                ) {
-                    stepFrame(by: -1)
-                }
-
-                controlButton(
-                    systemImage: "arrow.counterclockwise",
-                    accessibilityLabel: "Replay swing"
-                ) {
-                    replay()
-                }
-
-                Button {
-                    togglePlayback()
-                } label: {
-                    Image(
-                        systemName: isPlaying
-                            ? "pause.circle.fill"
-                            : "play.circle.fill"
-                    )
-                    .font(.system(size: 54))
-                    .foregroundStyle(AppColors.accent)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    isPlaying
-                        ? "Pause video"
-                        : "Play video"
-                )
-
-                controlButton(
-                    systemImage: "forward.frame.fill",
-                    accessibilityLabel: "Next frame"
-                ) {
-                    stepFrame(by: 1)
-                }
-            }
-            .frame(maxWidth: .infinity)
-
-            Picker(
-                "Playback Speed",
-                selection: $playbackRate
-            ) {
-                Text("0.25×").tag(Float(0.25))
-                Text("0.5×").tag(Float(0.5))
-                Text("1×").tag(Float(1.0))
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: playbackRate) {
-                updatePlaybackRate()
-            }
-        }
-        .padding()
-        .background(AppColors.cardBackground)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: 20,
-                style: .continuous
-            )
+        PlaybackControlsView(
+            isPlaying: $isPlaying,
+            playbackRate: $playbackRate,
+            currentTime: $currentTime,
+            duration: duration,
+            onPlayPause: togglePlayback,
+            onReplay: replay,
+            onPreviousFrame: {
+                stepFrame(by: -1)
+            },
+            onNextFrame: {
+                stepFrame(by: 1)
+            },
+            onSeek: { newTime in
+                selectedPhase = nearestPhase(to: newTime)
+                seek(to: newTime)
+            },
+            onRateChanged: updatePlaybackRate
         )
     }
 
     private var playbackTimeline: some View {
-        HStack(spacing: 12) {
-            Text(formatTime(currentTime))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(
-                    minWidth: 34,
-                    alignment: .leading
-                )
-
-            Slider(
-                value: Binding(
-                    get: {
-                        min(currentTime, duration)
-                    },
-                    set: { newValue in
-                        currentTime = newValue
-                        selectedPhase = nearestPhase(
-                            to: newValue
-                        )
-                        seek(to: newValue)
-                    }
-                ),
-                in: 0...max(duration, 0.1)
-            )
-            .tint(AppColors.accent)
-
-            Text(formatTime(duration))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(
-                    minWidth: 34,
-                    alignment: .trailing
-                )
+        PlaybackTimelineView(
+            currentTime: $currentTime,
+            duration: duration,
+            accentColor: AppColors.accent
+        ) { newTime in
+            selectedPhase = nearestPhase(to: newTime)
+            seek(to: newTime)
         }
     }
 
-    private func controlButton(
-        systemImage: String,
-        accessibilityLabel: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.title2)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
+   
     // MARK: - Review workspace
 
-    private var reviewWorkspace: some View {
-        VStack(spacing: 16) {
-            Picker(
-                "Review Workspace",
-                selection: $selectedWorkspace
-            ) {
-                ForEach(ReviewWorkspace.allCases) { workspace in
-                    Text(workspace.title)
-                        .tag(workspace)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Group {
-                switch selectedWorkspace {
-                case .coach:
-                    coachingWorkspace
-
-                case .metrics:
-                    metricsWorkspace
-
-                case .drills:
-                    drillsWorkspace
-                }
-            }
-            .frame(
-                maxWidth: .infinity,
-                alignment: .leading
-            )
-        }
-    }
-
-    private var coachingWorkspace: some View {
-        let activePhase = selectedPhase ?? .address
-        let recommendations = coachingEngine.recommendations(
-            for: activePhase
-        )
-
-        return CoachingCardView(
-            phase: activePhase,
-            recommendations: recommendations
-        )
-        .padding()
-        .background(AppColors.cardBackground)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: 20,
-                style: .continuous
-            )
-        )
-    }
-
-    private var metricsWorkspace: some View {
-        placeholderWorkspace(
-            title: "Swing Metrics",
-            message: "Spine angle, shoulder turn, hip rotation, balance, and tempo will appear here after pose analysis is added.",
-            systemImage: "chart.bar.xaxis"
-        )
-    }
-
-    private var drillsWorkspace: some View {
-        placeholderWorkspace(
-            title: "Recommended Drills",
-            message: "SwingFix will recommend focused practice drills based on your highest-priority coaching feedback.",
-            systemImage: "figure.golf"
-        )
-    }
-
-    private func placeholderWorkspace(
-        title: String,
-        message: String,
-        systemImage: String
-    ) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: systemImage)
-                .font(.system(size: 42))
-                .foregroundStyle(AppColors.accent)
-
-            Text(title)
-                .font(.title3.bold())
-
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(28)
-        .background(AppColors.cardBackground)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: 20,
-                style: .continuous
-            )
-        )
-    }
-
+    
     // MARK: - Player setup
 
     @MainActor
@@ -333,7 +164,18 @@ struct VideoReviewView: View {
         addTimeObserver()
         addPlaybackEndObserver(for: currentItem)
     }
+    @MainActor
+    private func processPoseSequence() async {
+        isProcessingPose = true
 
+        poseSequence = await poseDetectionEngine.processVideo(
+            at: video.url,
+            samplesPerSecond: 4
+        )
+
+        isProcessingPose = false
+    }
+    
     private func selectSwingPosition(
         _ marker: SwingTimeline.Marker
     ) {
@@ -537,28 +379,5 @@ struct VideoReviewView: View {
             minutes,
             remainingSeconds
         )
-    }
-}
-
-private enum ReviewWorkspace: String, CaseIterable, Identifiable {
-    case coach
-    case metrics
-    case drills
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .coach:
-            return "Coach"
-
-        case .metrics:
-            return "Metrics"
-
-        case .drills:
-            return "Drills"
-        }
     }
 }
